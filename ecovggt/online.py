@@ -1,19 +1,16 @@
 """Online Stream: EcoVGGT on frames that arrive one at a time.
 
-Every `key_interval` frames, the newly arrived frame becomes a candidate key. A pass then
-pins the candidate keys (thinned evenly in time to at most `max_keys`), rebuilds the Scene
-Cache, attaches the frames whose turn has come, and emits them. Each frame is emitted
-exactly once, `lag` passes after the interval it belongs to, so it is reconstructed with
-keys that reach beyond it. The scale of every pass is stitched to the scale already
-emitted through the median depth of the keys shared with earlier passes (VGGT), or with a
-similarity transform fitted on the shared keys (pi3).
+Every `key_interval` frames, the newest frame becomes a candidate key. Each pass pins up to
+`max_keys` candidates spread evenly over the past, rebuilds the cache, and outputs the
+frames from `lag` intervals back, so every frame also sees keys from after it. Passes are
+brought to a common scale with the median depth of shared keys, and pi3 passes are also
+aligned by a rigid fit on the shared cameras.
 
-Usage:
     stream = VGGTOnlineStream(model, key_interval=16, lag=2, max_keys=32)
-    for image in frames:              # image: [3, H, W] in [0, 1]
-        for i in stream.push(image):  # indices of frames emitted by this call
-            ...                       # stream.pose_enc(i), stream.depth[i], stream.conf[i]
-    stream.finish()                   # emits the remaining frames
+    for image in frames:              # [3, H, W] in [0, 1]
+        emitted = stream.push(image)  # frames finished by this call
+    stream.finish()
+    out = stream.results()
 """
 import contextlib
 from typing import Dict, List
@@ -55,8 +52,8 @@ class _Buffer:
 
 
 class VGGTOnlineStream:
-    """Online Stream on a VGGT backbone. Outputs are pose encodings (VGGT convention, frame 0
-    is the reference), depth maps and their confidence, all in the scale of the first pass."""
+    """Online Stream on VGGT. Outputs pose encodings (frame 0 is the reference), depth and
+    confidence, all in the scale of the first pass."""
 
     def __init__(self, model, key_interval=16, lag=2, max_keys=32, chunk=64, tasks=("camera", "depth"), amp_dtype=torch.bfloat16):
         self.model, self.kappa, self.lag, self.max_keys, self.chunk, self.tasks = model, key_interval, lag, max_keys, chunk, tasks
@@ -182,7 +179,7 @@ class VGGTOnlineStream:
 
     @torch.no_grad()
     def finish(self) -> List[int]:
-        """Emit every frame that is still pending after the last frame has arrived."""
+        """Output every frame that is still pending after the last frame."""
         keys = _thin(self.candidates, len(self.candidates) - 1, self.max_keys)
         rest = [f for f in range(self.n) if not self._done(f) and f not in set(keys)]
         if not rest and all(self._done(k) for k in keys):
@@ -210,9 +207,9 @@ class VGGTOnlineStream:
 
 
 class Pi3OnlineStream:
-    """Online Stream on a pi3 backbone. pi3 has no reference frame, so each pass is aligned to
-    the emitted frames with a similarity transform fitted on the camera centers and axes of
-    the shared keys (scale from their median depth)."""
+    """Online Stream on pi3. pi3 has no reference frame, so each pass is aligned to earlier
+    output by a rigid fit on the centers and axes of shared cameras, with the scale taken from
+    their median depth."""
 
     def __init__(self, model, key_interval=16, max_keys=32, chunk=64, amp_dtype=torch.bfloat16):
         self.model, self.kappa, self.max_keys, self.chunk = model, key_interval, max_keys, chunk

@@ -1,11 +1,9 @@
-"""Alignment Score: how sharply the alignment band of VGGT attends during the pin pass.
+"""Alignment Score of VGGT.
 
-For a query token, the divergence of its attention distribution p over N key tokens
-from the uniform distribution u is KL(u || p) = logsumexp(l) - mean(l) - log N, where
-l are the attention logits. The score is the 90th percentile of this divergence over
-2,048 random patch queries of the pinned frames and all heads of global block 13.
-A low score means the band failed to concentrate its attention, which flags a likely
-failed reconstruction (see the paper and its supplementary material).
+For each query, KL(u || p) between the uniform distribution u and its attention p over N
+keys equals logsumexp(l) - mean(l) - log N, with l the attention logits. The score is the
+90th percentile of this value over 2,048 random patch queries and all heads of global
+block 13 in the pin pass. Low scores flag likely failures.
 """
 import math
 
@@ -14,22 +12,20 @@ import torch.nn.functional as F
 
 SCORE_BLOCK = 13
 NUM_QUERIES = 2048
-# Scores below these thresholds flag a likely failure. On 500-frame ScanNet videos, the
-# best threshold is 7.83 under full attention and lies between 9.01 and 9.15 for key sets
-# of a quarter down to a thirty-second of the frames, so the paper uses 9.09 for all
-# restricted key sets. On longer videos, the best threshold depends on the length.
+# Thresholds on 500-frame ScanNet videos: 7.83 under full attention and 9.09 for restricted
+# key sets (the best value lies between 9.01 and 9.15 there). Longer videos need their own.
 THRESHOLD_FULL_ATTENTION = 7.83
 THRESHOLD_PINNED_KEYS = 9.09
 
 
 @torch.no_grad()
 def attention_divergence(block, tokens, pos, patch_start_idx, num_queries=NUM_QUERIES, seed=0):
-    """Divergence statistics of one VGGT global block.
+    """KL(u || p) statistics of one global block.
 
     Args:
         block: a VGGT global attention block.
-        tokens: block input tokens of the pinned frames, [B, n, T, C].
-        pos: their 2D positions for RoPE, [B, n, T, 2], or None.
+        tokens: input tokens of the pinned frames, [B, n, T, C].
+        pos: their 2D RoPE positions, [B, n, T, 2], or None.
         patch_start_idx: number of special tokens before the patch tokens.
     Returns:
         dict with the median (c50) and the 90th percentile (c90, the Alignment Score).

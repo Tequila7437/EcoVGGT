@@ -1,13 +1,11 @@
-"""EcoVGGT on Depth Anything 3 (DA3-LARGE): Pinned Key Set inference with a Scene Cache.
+"""EcoVGGT on Depth Anything 3 (DA3-LARGE).
 
-DA3 is a single ViT whose odd layers from `alt_start` on attend across views. The pin pass
-caches the inputs of these layers on the pinned views (frame 0 first, as reference); attach
-batches run the same layers with keys and values from the cache.
+From `alt_start` on, the odd layers attend across views. The pin pass caches their inputs
+(frame 0 first, as the reference view), and attach batches read keys and values from them.
 
-The layer loop is adapted from Depth Anything 3
-(https://github.com/ByteDance-Seed/Depth-Anything-3) under the Apache License 2.0; see
-licenses/LICENSE-Depth-Anything-3-Apache-2.0.txt. The changes cache the inputs of the
-cross-view layers and let attach batches read keys and values from this cache.
+Layer loop adapted from Depth Anything 3 (https://github.com/ByteDance-Seed/Depth-Anything-3),
+Apache License 2.0, see licenses/LICENSE-Depth-Anything-3-Apache-2.0.txt. Modified to cache
+the inputs of the cross-view layers and to attend to this cache in attach batches.
 """
 from typing import Dict, Optional, Sequence
 
@@ -181,7 +179,7 @@ def to_camera_outputs(res, H, W, device):
 @torch.no_grad()
 def reconstruct(model, images, num_keys: int = 31, key_frames: Optional[Sequence[int]] = None, chunk: int = 64,
                 amp_dtype=torch.bfloat16) -> Dict:
-    """Reconstruct a video with EcoVGGT on a DA3 backbone (images [1, S, 3, H, W] in [0, 1])."""
+    """Run EcoVGGT on DA3. images: [1, S, 3, H, W] in [0, 1]."""
     H, W = images.shape[-2:]
     amp = torch.autocast("cuda", dtype=amp_dtype) if (images.is_cuda and amp_dtype is not None) else torch.autocast("cpu", enabled=False)
     with amp:

@@ -1,4 +1,4 @@
-"""One entry point for the three backbones, returning camera matrices, depth and points."""
+"""ecovggt.reconstruct: one call for every backbone."""
 from typing import Dict, Optional, Sequence
 
 import numpy as np

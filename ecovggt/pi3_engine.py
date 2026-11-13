@@ -1,13 +1,12 @@
-"""EcoVGGT on pi3: Pinned Key Set inference with a Scene Cache.
+"""EcoVGGT on pi3.
 
-pi3 has no reference frame and its heads decode every frame on its own, so the pin pass
-and every attach batch give their outputs independently. Global layers of attach batches
-read the cached tokens of the pinned frames.
+pi3 has no reference frame and decodes every frame on its own, so the pin pass and the
+attach batches produce their outputs independently. In attach batches, the global layers
+attend to the cached tokens of the pinned frames.
 
-The decoder loop and the head calls are adapted from pi3 (https://github.com/yyfz/Pi3),
-Copyright (c) 2025, the authors, under the BSD 3-Clause License; see
-licenses/LICENSE-Pi3-BSD-3-Clause.txt. The changes restrict the keys and values of the
-global layers to cached pinned frames.
+Decoder loop and head calls adapted from pi3 (https://github.com/yyfz/Pi3), Copyright (c)
+2025, the authors, BSD 3-Clause License, see licenses/LICENSE-Pi3-BSD-3-Clause.txt.
+Modified so that the global layers read keys and values from cached pinned frames.
 """
 from typing import Dict, Optional, Sequence
 
@@ -166,7 +165,7 @@ def to_camera_outputs(out, H, W, device=None):
 @torch.no_grad()
 def reconstruct(model, imgs, num_keys: int = 31, key_frames: Optional[Sequence[int]] = None, chunk: int = 64,
                 amp_dtype=torch.bfloat16) -> Dict:
-    """Reconstruct a video with EcoVGGT on a pi3 backbone (imgs [1, S, 3, H, W] in [0, 1])."""
+    """Run EcoVGGT on pi3. imgs: [1, S, 3, H, W] in [0, 1]."""
     H, W = imgs.shape[-2:]
     amp = torch.autocast("cuda", dtype=amp_dtype) if (imgs.is_cuda and amp_dtype is not None) else torch.autocast("cpu", enabled=False)
     with amp:

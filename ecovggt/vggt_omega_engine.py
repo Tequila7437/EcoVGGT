@@ -1,18 +1,14 @@
-"""EcoVGGT on VGGT-Omega: Pinned Key Set inference with a Scene Cache.
+"""EcoVGGT on VGGT-Omega.
 
-VGGT-Omega alternates frame blocks with cross-frame blocks of two kinds. Global blocks let
-all tokens of all frames attend to one another, and register blocks do so for the camera
-and register tokens only. The pin pass runs the pinned frames (frame 0 first, with the
-reference tokens) and caches the input of every cross-frame block; attach batches read
-keys and values from this cache. The dense head decodes every frame on its own, and the
-camera head reads the last camera and register tokens of all frames, as in the paper.
-Following the official forward pass, the aggregator runs under bfloat16 autocast and both
-heads run in float32.
+Global blocks attend over all tokens, and register blocks over the camera and register
+tokens only. The pin pass caches the inputs of both kinds, and attach batches read keys and
+values from the cache. The dense head runs per frame, and the camera head reads the last
+camera and register tokens of all frames. Precision follows the official forward pass
+(bf16 autocast for the aggregator, fp32 heads).
 
-The layer loop is adapted from VGGT-Omega (https://github.com/facebookresearch/vggt-omega)
-under the FAIR Noncommercial Research License; see
-licenses/LICENSE-VGGT-Omega-FAIR-Noncommercial.txt. The changes restrict the keys and
-values of the cross-frame blocks to cached pinned frames.
+Layer loop adapted from VGGT-Omega (https://github.com/facebookresearch/vggt-omega), FAIR
+Noncommercial Research License, see licenses/LICENSE-VGGT-Omega-FAIR-Noncommercial.txt.
+Modified to cache the inputs of the cross-frame blocks for attach batches.
 """
 from typing import Dict, List, Optional, Sequence
 
@@ -47,8 +43,7 @@ def _kv(attn, x):
 
 
 def cached_block(blk, x, x_kv):
-    """A cross-frame block (no positional embedding) with queries from x and keys and values
-    from x_kv."""
+    """Cross-frame block (no positional encoding) with queries from x and keys and values from x_kv."""
     a = blk.attn
     B, N, C = x.shape
     o = F.scaled_dot_product_attention(_q(a, blk.norm1(x)), *_kv(a, blk.norm1(x_kv))).transpose(1, 2).reshape(B, N, C)
@@ -132,9 +127,9 @@ def _to_gpu(x):
 
 @torch.no_grad()
 def reconstruct_raw(model, images, num_keys: int = 31, key_frames: Optional[Sequence[int]] = None, chunk: int = 64) -> Dict:
-    """images [1, S, 3, h, w] in [0, 1] from the VGGT-Omega preprocessing (may stay on the
-    CPU; batches move to the GPU). Returns the VGGT-Omega pose encoding [1, S, 9], depth
-    [1, S, h, w, 1], depth confidence [1, S, h, w], and the pinned frames."""
+    """images: [1, S, 3, h, w] in [0, 1] from the VGGT-Omega preprocessing. They may stay on the
+    CPU, since batches are moved to the GPU. Returns the VGGT-Omega pose encoding [1, S, 9],
+    depth [1, S, h, w, 1], depth confidence [1, S, h, w], and the pinned frames."""
     agg = model.aggregator
     P, S = agg.patch_token_start, images.shape[1]
     keys = [0] + sorted(set(key_frames if key_frames is not None else pinned_keys(S, num_keys)) - {0})
@@ -165,9 +160,9 @@ def reconstruct_raw(model, images, num_keys: int = 31, key_frames: Optional[Sequ
 
 @torch.no_grad()
 def online_reconstruct(model, images, key_interval: int = 16, lag: int = 2, max_keys: int = 32, chunk: int = 64) -> Dict:
-    """The Online Stream of the paper on VGGT-Omega, run over a clip [1, S, 3, h, w] in arrival
-    order: every pass uses only frames that have arrived. Scales are stitched by the median
-    depth of keys emitted earlier, as on VGGT. Returns the same entries as reconstruct_raw."""
+    """Online Stream over a clip [1, S, 3, h, w] in arrival order. Each pass uses only frames
+    that have arrived, and scales are matched with the median depth of shared keys, as for
+    VGGT. Returns the same entries as reconstruct_raw."""
     agg = model.aggregator
     P, S = agg.patch_token_start, images.shape[1]
     cands = list(range(0, S, key_interval))
@@ -235,7 +230,7 @@ def online_reconstruct(model, images, key_interval: int = 16, lag: int = 2, max_
         torch.cuda.empty_cache()
     keys = keyset(len(cands) - 1)
     rest = [f for f in range(S) if pose[f] is None and f not in set(keys)]
-    if rest or any(pose[f] is None for f in keys):  # the stream has ended: emit everything that is left
+    if rest or any(pose[f] is None for f in keys):  # end of stream: output the rest
         cache = {}
         cr_k, d_k, c_k = run(keys, True, cache=cache)
         attach_and_emit(keys, [rest] if rest else [], cache, cr_k, d_k, c_k, cands[:-1], None)
@@ -269,7 +264,8 @@ def to_camera_outputs(raw, h, w):
 
 @torch.no_grad()
 def reconstruct(model, images, num_keys: int = 31, key_frames: Optional[Sequence[int]] = None, chunk: int = 64) -> Dict:
-    """Reconstruct a video with EcoVGGT on VGGT-Omega (images [1, S, 3, h, w], see reconstruct_raw)."""
+    """Run EcoVGGT on VGGT-Omega. images: [1, S, 3, h, w] from
+    load_images(..., backbone="vggt-omega")."""
     raw = reconstruct_raw(model, images, num_keys=num_keys, key_frames=key_frames, chunk=chunk)
     out = to_camera_outputs(raw, *images.shape[-2:])
     out["pinned_frames"] = raw["pinned_frames"]

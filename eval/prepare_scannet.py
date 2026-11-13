@@ -1,15 +1,14 @@
-"""Export ScanNet .sens files into the folder layout of the evaluation and of the training.
+r"""Export ScanNet .sens files for evaluation and training.
 
-Evaluation layout (every frame, as in the protocol of FastVGGT):
+Evaluation layout (all frames, FastVGGT protocol):
     <out>/<scene>/color/<i>.jpg      original JPEG bytes of frame i
     <out>/<scene>/pose/<i>.txt       camera-to-world 4x4 (invalid poses written as -inf)
     <out>/<scene>/intrinsic/*.txt    color and depth intrinsics and extrinsics
-The ground-truth depth of the evaluation is read from the .sens files directly.
+The evaluation reads ground-truth depth from the .sens files directly.
 
-Training layout (every 5th frame with a valid pose, plus depth):
+Training layout (--train, every 5th frame with a valid pose) adds
     <out>/<scene>/depth/<i>.png      16-bit depth in millimeters
 
-Usage:
     python eval/prepare_scannet.py --sens_root /data/scannet/scans --scenes eval/scannet_50.txt \
         --out /data/scannet/process_scannet
     python eval/prepare_scannet.py --sens_root /data/scannet/scans --scenes training/scannet_train_195.txt \

@@ -1,17 +1,15 @@
-"""Alignment Refocusing: fine-tune global blocks 10 to 15 of VGGT on samples with the
-structure of EcoVGGT inference.
+r"""Train Alignment Refocusing: fine-tune global blocks 10 to 15 of VGGT, all other weights frozen.
 
-Each step draws one scan, either whole or a random contiguous half, pins 24 evenly spread
-frames, and draws 24 random other frames that read only the pinned keys. The loss is the
-camera loss of VGGT on all frames (weight 5) plus its depth loss on 6 random frames. All
-other weights stay frozen. The paper trains for 2,000 AdamW steps (learning rate 1e-5) on
-195 ScanNet scans, which takes 3.6 GPU hours on one A100 GPU with 80 GB.
+Each step takes a whole scan or a random contiguous half, pins 24 evenly spaced frames, and
+adds 24 random frames that read only the pinned keys. Loss: the VGGT camera loss on all
+frames (weight 5) plus the depth loss on 6 random frames. Our weights: 2,000 AdamW steps,
+learning rate 1e-5, 195 ScanNet scans, 3.6 hours on one A100 (80 GB).
 
-Usage:
     python training/train_refocusing.py --data_dir /data/scannet/process_scannet_train \
         --scenes training/scannet_train_195.txt --weights /path/to/VGGT-1B/model.pt --out runs/refocusing
-The data folder comes from eval/prepare_scannet.py --train. The output folder receives
-alignment_refocusing_step<N>.safetensors (load with ecovggt.load_refocusing) and log.jsonl.
+
+Data comes from eval/prepare_scannet.py --train. Writes alignment_refocusing_step<N>.safetensors
+(load with ecovggt.load_refocusing) and log.jsonl.
 """
 import argparse
 import glob
@@ -36,8 +34,8 @@ from ecovggt.models import _add_path  # noqa: E402
 
 _add_path("ECOVGGT_VGGT_ROOT", "FastVGGT")
 _official = os.environ.get("ECOVGGT_VGGT_OFFICIAL_ROOT") or str(ROOT / "third_party" / "vggt")
-sys.path.append(os.path.join(_official, "training"))  # the training losses of VGGT
-if importlib.util.find_spec("iopath") is None:  # only used for file I/O inside the official training utilities
+sys.path.append(os.path.join(_official, "training"))  # VGGT training losses (loss.py)
+if importlib.util.find_spec("iopath") is None:  # iopath is only used for file I/O in train_utils, so a stub is enough
     _m, _c, _f = types.ModuleType("iopath"), types.ModuleType("iopath.common"), types.ModuleType("iopath.common.file_io")
     _f.g_pathmgr = None
     sys.modules.update({"iopath": _m, "iopath.common": _c, "iopath.common.file_io": _f})
@@ -79,9 +77,9 @@ class ScanNetScans:
         print(f"[data] {len(self.scans)} scans", flush=True)
 
     def sample(self, n_pinned, n_query, rng, whole_prob=0.6):
-        """Pinned frames spread evenly over the whole scan or a random contiguous half, and
-        random other frames of that range. Returns the scan, the sorted frame ids, and the
-        positions of the pinned frames among them (the first is frame 0 of the sample)."""
+        """Pinned frames spread over the whole scan or a random contiguous half, plus random other
+        frames from that range. Returns the scan, the sorted frame ids, and the positions of the
+        pinned frames (the first one is frame 0 of the sample)."""
         s = self.scans[rng.integers(len(self.scans))]
         v, n = s["valid"], len(s["valid"])
         if rng.random() < whole_prob:
@@ -132,7 +130,7 @@ def depth_to_color(dep, Kd, Kc, H, W):
         vc = (Kc[1, 1] * Y / z.clamp(min=1e-6) + Kc[1, 2]).round().long()
         ok = m & (uc >= 0) & (uc < W) & (vc >= 0) & (vc < H)
         zz, uu, vv = z[ok], uc[ok], vc[ok]
-        order = torch.argsort(zz, descending=True)  # far first, so that near points overwrite
+        order = torch.argsort(zz, descending=True)  # far to near, so near points overwrite
         out[si].view(-1)[vv[order] * W + uu[order]] = zz[order]
     return out
 
@@ -159,10 +157,10 @@ def make_batch(images, dep, K, c2w, device):
 
 # ----------------------------------------------------------------------------- model
 def forward_pinned(model, images, pinned):
-    """Aggregator pass in which every frame reads keys and values only from the pinned
-    frames (positions `pinned` in the sample). Blocks before the band run without gradients,
-    the band keeps its activations, and later frozen blocks are recomputed in the backward
-    pass. Returns the inputs of the prediction heads and the patch start index."""
+    """Aggregator pass in which every frame takes keys and values from the pinned frames only.
+    Blocks before the band run without gradients, the band keeps its activations, and later
+    frozen blocks are recomputed in the backward pass. Returns the head inputs and the patch
+    start index."""
     agg = model.aggregator
     B, S = images.shape[:2]
     with torch.no_grad():

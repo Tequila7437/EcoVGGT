@@ -3,10 +3,10 @@ from typing import List
 
 
 def pinned_keys(num_frames: int, num_keys: int = 31) -> List[int]:
-    """Indices of `num_keys` frames spread evenly over a video of `num_frames` frames.
+    """Indices of `num_keys` frames spread evenly over `num_frames` frames.
 
-    The first and the last frame are always pinned. Frame 0 is the reference frame
-    of VGGT, so every reconstruction is expressed in its camera coordinates.
+    The first and the last frame are always included. Frame 0 is the reference frame of
+    VGGT, so the outputs are in its camera coordinates.
     """
     if num_frames <= 0:
         raise ValueError("num_frames must be positive")

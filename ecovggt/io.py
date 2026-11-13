@@ -19,8 +19,7 @@ def _natural_key(path: str):
 
 
 def list_frames(source: str, stride: int = 1, max_frames: int = 0) -> List:
-    """Frames of a folder of images (in natural name order) or of a video file.
-    Returns file paths for folders and RGB arrays for videos."""
+    """Image paths of a folder (natural order) or RGB frames of a video."""
     if os.path.isdir(source):
         frames = sorted((p for p in glob.glob(os.path.join(source, "*")) if p.lower().endswith(IMAGE_EXTS)), key=_natural_key)
         if not frames:
@@ -43,9 +42,8 @@ def list_frames(source: str, stride: int = 1, max_frames: int = 0) -> List:
 
 
 def preprocess(frame, width: int = 518, patch: int = 14) -> torch.Tensor:
-    """VGGT-style preprocessing: resize to `width` with bicubic interpolation, height rounded
-    to a multiple of `patch` and center-cropped to at most `width`. Returns [3, H, W] in [0, 1].
-    Images are decoded with OpenCV, as in the evaluation."""
+    """Resize to `width` (bicubic), round the height to a multiple of `patch`, and center-crop
+    it to at most `width`. Decodes with OpenCV like the evaluation. Returns [3, H, W] in [0, 1]."""
     if isinstance(frame, str):
         arr = cv2.imread(frame)
         if arr is None:
@@ -63,9 +61,8 @@ def preprocess(frame, width: int = 518, patch: int = 14) -> torch.Tensor:
 
 
 def load_images(source: str, stride: int = 1, max_frames: int = 0, backbone: str = "vggt") -> torch.Tensor:
-    """[S, 3, H, W] in [0, 1] from a folder of images or a video, preprocessed for the backbone:
-    518 pixels wide for VGGT, pi3 and DA3, and the official 416-pixel "balanced" resizing of
-    VGGT-Omega (about 480 x 352 for 4:3 frames)."""
+    """[S, 3, H, W] in [0, 1] from a folder or a video. VGGT, pi3 and DA3 get 518-pixel-wide
+    frames, and VGGT-Omega gets its official 416-pixel "balanced" resize (480 x 352 for 4:3)."""
     frames = list_frames(source, stride, max_frames)
     if backbone != "vggt-omega":
         return torch.stack([preprocess(f) for f in frames])
@@ -75,7 +72,7 @@ def load_images(source: str, stride: int = 1, max_frames: int = 0, backbone: str
     if isinstance(frames[0], str):
         return load_and_preprocess_images(frames, mode="balanced", image_resolution=416)
     import tempfile
-    with tempfile.TemporaryDirectory() as tmp:  # video frames: lossless files for the official loader
+    with tempfile.TemporaryDirectory() as tmp:  # the official loader reads files, so save video frames as PNG first
         paths = []
         for i, f in enumerate(frames):
             paths.append(os.path.join(tmp, f"{i:06d}.png"))

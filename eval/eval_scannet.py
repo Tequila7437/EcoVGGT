@@ -1,14 +1,13 @@
-"""Evaluate EcoVGGT on long ScanNet videos with the protocol of the paper.
+r"""ScanNet evaluation with the protocol of the paper.
 
-Each video keeps its first frame and then takes frames at the largest integer stride that
-fills the frame budget (the protocol of FastVGGT). A scene succeeds when its ATE is below
-0.2 m. The script writes one JSON file per scene and a summary with the success rate and
-the medians over scenes.
+Frames: the first frame, then every k-th frame with the largest k that fills the budget
+(FastVGGT protocol). A scene succeeds when its ATE is below 0.2 m. Writes one JSON file per
+scene and summary.json.
 
-Example (EcoVGGT (VGGT) offline on 500-frame videos):
-    python eval/eval_scannet.py --data_dir /data/scannet/process_scannet --sens_root /data/scannet/scans \
-        --backbone vggt --num_frames 500 --out results/vggt_500
-Add --online for the Online Stream (key interval 16 up to 500 frames and 32 above, as in the paper).
+    python eval/eval_scannet.py --data_dir /data/scannet/process_scannet \
+        --sens_root /data/scannet/scans --backbone vggt --num_frames 500 --out results/vggt_500
+
+--online runs the Online Stream (key interval 16 up to 500 frames, 32 above).
 """
 import argparse
 import json
@@ -28,7 +27,7 @@ from eval.metrics import depth_errors, point_errors, trajectory_errors  # noqa: 
 from eval.prepare_scannet import find_sens, read_sens_depth  # noqa: E402
 from ecovggt.models import _add_path  # noqa: E402
 
-_add_path("ECOVGGT_VGGT_ROOT", "FastVGGT")  # the protocol uses the camera encoding and unprojection of VGGT for every backbone
+_add_path("ECOVGGT_VGGT_ROOT", "FastVGGT")  # VGGT's pose encoding and unprojection are used for all backbones
 
 SUCCESS_ATE = 0.2  # meters
 
@@ -77,9 +76,9 @@ def load_vggt_omega_frames(paths):
 
 
 def predict_vggt_omega(model, imgs, H, W, online_mode, key_interval):
-    """VGGT-Omega runs on its own preprocessing of the frames (imgs). Its depth and confidence
-    are resized bilinearly to the H x W grid of the evaluation, and its focal lengths are
-    scaled to this grid with the principal point at the center."""
+    """Run VGGT-Omega on its own 416-pixel input (imgs), then resize depth and confidence to the
+    H x W evaluation grid (bilinear) and rescale the focal lengths, with the principal point at
+    the center."""
     from vggt.utils.pose_enc import extri_intri_to_pose_encoding
     from vggt_omega.utils.pose_enc import encoding_to_camera
     S, _, h, w = imgs.shape
@@ -104,11 +103,10 @@ def predict_vggt_omega(model, imgs, H, W, online_mode, key_interval):
 
 
 def predict(model, backbone, x, online_mode, key_interval, frames=None):
-    """x [S, 3, H, W] bfloat16 on the GPU. Returns pose encodings [1, S, 9], depth
-    [1, S, H, W, 1], and a confidence [1, S, H, W] whose threshold of 1 drops unreliable pixels.
-    For pi3 and DA3, also returns their own world points [1, S, H, W, 3] with a confidence on
-    the same scale; as in the paper, the point metrics of these backbones use these points,
-    and those of VGGT and VGGT-Omega unproject the depth maps."""
+    """x: [S, 3, H, W] bf16 on the GPU. Returns pose encodings [1, S, 9], depth [1, S, H, W, 1],
+    confidence [1, S, H, W] (pixels below 1 are dropped), and for pi3 and DA3 their own world
+    points with a confidence on the same scale. Point metrics use these points for pi3 and DA3
+    and unprojected depth for VGGT and VGGT-Omega, as in the paper."""
     from vggt.utils.pose_enc import extri_intri_to_pose_encoding
     S, _, H, W = x.shape
     if backbone == "vggt-omega":
@@ -147,7 +145,7 @@ def evaluate_scene(model, args, scene):
     x, frame_ids, c2w_gt, paths = load_scene(Path(args.data_dir) / scene, args.num_frames)
     S, _, H, W = x.shape
     key_interval = args.key_interval or (16 if args.num_frames <= 500 else 32)
-    frames = load_vggt_omega_frames(paths) if args.backbone == "vggt-omega" else None  # decoding stays outside the timing
+    frames = load_vggt_omega_frames(paths) if args.backbone == "vggt-omega" else None  # decoded before the timer starts
     torch.cuda.synchronize()
     torch.cuda.reset_peak_memory_stats()
     t0 = time.time()
@@ -156,7 +154,7 @@ def evaluate_scene(model, args, scene):
     torch.cuda.synchronize()
     seconds = time.time() - t0
     peak_gb = torch.cuda.max_memory_allocated() / 2**30
-    w2c, K = pose_encoding_to_extri_intri(pose_enc, (H, W))  # in the dtype of the camera head, as in the paper
+    w2c, K = pose_encoding_to_extri_intri(pose_enc, (H, W))  # keep the camera head's dtype (bf16 for VGGT), as in our runs
     w2c, K = w2c[0].float().cpu().numpy(), K[0].float().cpu().numpy()
     depth = depth[0].float().cpu().numpy()
     raw_depth = depth.copy()

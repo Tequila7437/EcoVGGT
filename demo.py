@@ -55,7 +55,7 @@ def main():
 
 
 def online(model, images, a):
-    """Feed frames one by one to the Online Stream and convert its outputs."""
+    """Run the Online Stream frame by frame and convert its outputs."""
     from ecovggt import pi3_engine, vggt_omega_engine
     from ecovggt.api import _unproject
     H, W = images.shape[-2:]

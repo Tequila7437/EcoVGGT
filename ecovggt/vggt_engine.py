@@ -1,10 +1,8 @@
-"""EcoVGGT on VGGT: Pinned Key Set inference with a Scene Cache.
+"""EcoVGGT on VGGT.
 
-A pin pass runs all 24 blocks on the pinned frames with full attention among them and
-stores the input tokens of every global block (the Scene Cache). Every other frame then
-runs in independent batches whose global blocks attend only to the cached pinned tokens.
-This reproduces joint inference with the pinned frames as the only keys exactly, at a
-memory cost that does not grow with the length of the video.
+pin_pass runs the pinned frames with full attention among themselves and caches the input
+of every global block. attach_pass runs the other frames in batches whose global blocks
+take keys and values from this cache only, which matches a joint pass with the same keys.
 """
 import contextlib
 from typing import Dict, Optional, Sequence
@@ -19,9 +17,8 @@ CACHED_BLOCKS = (4, 11, 17, 23)  # blocks whose outputs the camera and depth hea
 
 
 def _special_tokens(tok, B, S, has_reference):
-    """Camera and register tokens [B*S, X, C]. VGGT gives the first frame of a sequence
-    its own (reference) tokens. An attach batch never contains frame 0, so all of its
-    frames take the tokens of non-reference frames."""
+    """Camera and register tokens [B*S, X, C]. Frame 0 gets the reference tokens. Attach
+    batches never contain frame 0, so all their frames get the regular ones."""
     if has_reference:
         query = tok[:, 0:1].expand(B, 1, *tok.shape[2:])
         others = tok[:, 1:].expand(B, S - 1, *tok.shape[2:])
@@ -47,8 +44,8 @@ def _embed(model, images, has_reference):
 
 
 def cached_attention_block(block, x_q, x_kv, pos_q, pos_kv):
-    """A VGGT global block whose queries come from x_q and whose keys and values come
-    from x_kv. With x_kv = x_q it equals the block's own forward pass."""
+    """Global block with queries from x_q and keys and values from x_kv. With x_kv = x_q it
+    is the block's own forward pass."""
     attn = block.attn
     hq, hk = block.norm1(x_q), block.norm1(x_kv)
     B, Nq, C = hq.shape
@@ -67,10 +64,10 @@ def cached_attention_block(block, x_q, x_kv, pos_q, pos_kv):
 
 @torch.no_grad()
 def pin_pass(model, images, score=False, score_queries=NUM_QUERIES):
-    """Run the pinned frames [B, n, 3, H, W] (frame 0 first) with full attention among them.
+    """Pinned frames [B, n, 3, H, W], frame 0 first, with full attention among them.
 
-    Returns the Scene Cache {global block: (input tokens, positions)}, the outputs of the
-    cached blocks, the patch start index and, if requested, the Alignment Score.
+    Returns the cache {global block: (input tokens, positions)}, the outputs of the cached
+    blocks, the patch start index, and the Alignment Score if requested.
     """
     agg = model.aggregator
     B, n = images.shape[:2]
@@ -103,7 +100,7 @@ def pin_pass(model, images, score=False, score_queries=NUM_QUERIES):
 
 @torch.no_grad()
 def attach_pass(model, images, cache):
-    """Run a batch of non-pinned frames [B, c, 3, H, W] whose global blocks read the Scene Cache."""
+    """Non-pinned frames [B, c, 3, H, W]. Their global blocks read the cache."""
     agg = model.aggregator
     B, c = images.shape[:2]
     tokens, pos, psi, P, C = _embed(model, images, has_reference=False)
@@ -147,14 +144,14 @@ def head_inputs(model, outs, dtype):
 @torch.no_grad()
 def reconstruct(model, images, num_keys: int = 31, key_frames: Optional[Sequence[int]] = None, chunk: int = 64,
                 tasks=("camera", "depth"), score: bool = False, amp_dtype=torch.bfloat16) -> Dict:
-    """Reconstruct a video with EcoVGGT on a VGGT backbone.
+    """Run EcoVGGT on a VGGT backbone.
 
     Args:
-        model: a VGGT model (optionally with Alignment Refocusing weights loaded).
-        images: [1, S, 3, H, W] in [0, 1], preprocessed like VGGT (width 518).
-        num_keys: size of the Pinned Key Set (31 in the paper).
+        model: a VGGT model, with or without Alignment Refocusing.
+        images: [1, S, 3, H, W] in [0, 1], 518 pixels wide.
+        num_keys: number of pinned frames (default 31).
         key_frames: explicit pinned frame indices (frame 0 is added if missing).
-        chunk: number of frames per attach batch.
+        chunk: frames per attach batch.
         tasks: subset of ("camera", "depth", "point").
         score: also return the Alignment Score of the pin pass.
     Returns:

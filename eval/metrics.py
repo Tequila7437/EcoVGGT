@@ -1,14 +1,12 @@
-"""Metrics of the ScanNet evaluation.
+"""ScanNet metrics.
 
-Trajectory errors follow the evaluation code of FastVGGT (see NOTICE.md): the predicted and
-ground-truth world-to-camera transforms of frames that start at the first frame are
-aligned with a similarity transform, the first predicted pose is then moved onto the first
-ground-truth pose, and ATE, RPE-r, and RPE-t are root mean squares of the translation
-errors, of the rotation errors between consecutive frames, and of the translation errors
-between consecutive frames. Point accuracy and completeness compare the predicted point of
-every pixel in the central 224 x 224 region with the ground-truth point of the same pixel
-after a similarity transform and ICP. AbsRel scales each predicted depth map by its median
-ratio to the ground truth.
+Trajectories follow the FastVGGT evaluation (see NOTICE.md): world-to-camera translations
+are aligned with Sim(3), the first pose is then moved onto the first ground-truth pose, and
+ATE, RPE-r, and RPE-t are RMS errors, the RPE between consecutive frames. For points, each
+pixel of the central 224 x 224 crop is paired with the ground-truth point of the same pixel,
+the prediction is aligned by Sim(3) and ICP, and accuracy and completeness are mean
+nearest-neighbor distances. AbsRel scales each depth map by its median ratio to the ground
+truth.
 """
 from copy import deepcopy
 
@@ -26,8 +24,8 @@ def _trajectory(poses, frame_ids):
 
 
 def _aligned(ref, est):
-    """Similarity alignment followed by origin alignment. evo 1.31 and earlier applied both
-    inside ape and rpe; newer versions refuse the combination, so it is applied here."""
+    """Sim(3) alignment, then origin alignment, as evo 1.31 and earlier did inside ape and rpe
+    (newer versions refuse the two flags together)."""
     est = deepcopy(est)
     est.align(ref, correct_scale=True, correct_only_scale=False)
     est.align_origin(ref)
@@ -92,7 +90,7 @@ def point_errors(pred_points, gt_depth, K_depth, depth_size, c2w_gt, max_points=
     pw, gw = pred_points[sl].astype(np.float64), gt_w[sl]
     m = (g[sl] > 0.1) & (g[sl] < 10) & np.isfinite(pw).all(-1)
     pw, gw = pw[m], gw[m]
-    if len(pw) > max_points:  # one index for both, so that pairs stay matched
+    if len(pw) > max_points:  # same indices for both clouds, so pairs stay matched
         idx = np.random.default_rng(seed).choice(len(pw), max_points, replace=False)
         pw, gw = pw[idx], gw[idx]
     s, R, t = umeyama_alignment(pw.T, gw.T, True)
