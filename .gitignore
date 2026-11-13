@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+third_party/
+outputs/
+results/
+runs/
+*.ply
+*.npz

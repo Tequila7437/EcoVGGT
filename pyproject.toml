@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ecovggt"
+version = "1.0.0"
+description = "Pinned-key inference for efficient and streamable feed-forward 3D reconstruction from long videos"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [
+  { name = "Hongsen Cao" },
+  { name = "Shanxin Yuan" },
+  { name = "Mona Jaber" },
+  { name = "Ahmed Sayed" },
+]
+dependencies = [
+  "torch>=2.3",
+  "torchvision",
+  "numpy",
+  "pillow",
+  "opencv-python",
+  "einops",
+  "safetensors",
+  "huggingface_hub",
+  "scipy",
+]
+
+[project.optional-dependencies]
+eval = ["evo>=1.30", "open3d"]
+
+[tool.setuptools]
+packages = ["ecovggt"]

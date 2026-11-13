@@ -1,0 +1,12 @@
+torch>=2.3
+torchvision
+numpy
+pillow
+opencv-python
+einops
+safetensors
+huggingface_hub
+scipy
+# evaluation
+evo>=1.30
+open3d
